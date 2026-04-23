@@ -18,9 +18,18 @@ const TOKEN = process.env.DISCORD_TOKEN || process.env.TOKEN;
 const APP_ID = "1038950275913019402";
 const IMAGE_URL =
   "https://i.pinimg.com/736x/37/84/1f/37841f7e4e07101448f58b45e2125686.jpg";
-const MEMORY_LIMIT_MB = 160;
+const MEMORY_LIMIT_MB = 170;
 
-// Minimal caching to keep memory low
+// Show which platform is running the bot
+const platform = process.env.RAILWAY_ENVIRONMENT
+  ? `Railway (env: ${process.env.RAILWAY_ENVIRONMENT})`
+  : process.env.REPL_ID
+  ? "Replit"
+  : "Unknown";
+
+console.log(`[BOT] Running on: ${platform}`);
+
+// Minimal caching to keep memory low from the start
 const client = new Client({
   makeCache: Options.cacheWithLimits({
     MessageManager: 0,
@@ -45,12 +54,40 @@ const client = new Client({
   },
 });
 
-// Fixed start timestamp — set once so the timer keeps counting forever
+// Fixed start timestamp — NEVER changes, so the timer keeps counting forever
 const START_TIMESTAMP = Date.now() - (724 * 3600 + 48 * 60 + 17) * 1000;
 
 let largeImage = IMAGE_URL;
 let imageReady = false;
 
+// ─── Memory Cleaner ───────────────────────────────────────────────────────────
+// Runs every 60 seconds. Clears Discord caches when heap reaches 170MB.
+// Does NOT touch RPC, timer, or reconnect logic.
+function cleanMemory() {
+  const mb = (bytes) => (bytes / 1024 / 1024).toFixed(1);
+  const mem = process.memoryUsage();
+  const heapUsed = mem.heapUsed / 1024 / 1024;
+
+  if (heapUsed >= MEMORY_LIMIT_MB) {
+    console.log(`[MEM] Heap at ${mb(mem.heapUsed)}MB — cleaning caches...`);
+    // Clear only Discord internal caches, never touch RPC or timestamps
+    try { client.guilds.cache.forEach(g => {
+      g.members?.cache.clear();
+      g.channels?.cache.clear();
+      g.roles?.cache.clear();
+    }); } catch (_) {}
+    try { client.channels.cache.clear(); } catch (_) {}
+    try { client.users.cache.clear(); } catch (_) {}
+    try { client.emojis.cache.clear(); } catch (_) {}
+    if (global.gc) global.gc();
+    const after = process.memoryUsage().heapUsed / 1024 / 1024;
+    console.log(`[MEM] Cleaned — heap now ${after.toFixed(1)}MB`);
+  }
+}
+
+setInterval(cleanMemory, 60 * 1000);
+
+// ─── RPC ──────────────────────────────────────────────────────────────────────
 async function setRPC() {
   if (!client.user) return;
   try {
@@ -78,75 +115,50 @@ async function setRPC() {
       status: "dnd",
     });
 
-    console.log("[RPC] Presence updated successfully");
+    console.log("[RPC] Presence active");
   } catch (err) {
     console.error("[RPC] Failed to set presence:", err.message);
   }
 }
 
-function checkMemory() {
-  const used = process.memoryUsage().heapUsed / 1024 / 1024;
-  console.log(`[MEM] Heap: ${used.toFixed(1)}MB`);
-  if (used > MEMORY_LIMIT_MB) {
-    console.log(`[MEM] Over limit — clearing caches`);
-    if (client.guilds) client.guilds.cache.clear();
-    if (client.channels) client.channels.cache.clear();
-    if (client.users) client.users.cache.clear();
-    if (client.emojis) client.emojis.cache.clear();
-    if (global.gc) {
-      global.gc();
-      console.log("[MEM] GC triggered");
-    }
-  }
-}
-
+// ─── Events ───────────────────────────────────────────────────────────────────
 client.on("ready", async () => {
   console.log(`[BOT] Logged in as ${client.user.tag}`);
   await setRPC();
 
-  // Re-apply presence every 5 minutes to keep it alive
-  setInterval(async () => {
-    await setRPC();
-  }, 5 * 60 * 1000);
-
-  // Check memory every 2 minutes
-  setInterval(() => {
-    checkMemory();
-  }, 2 * 60 * 1000);
+  // Refresh presence every 5 minutes to keep it alive
+  setInterval(setRPC, 5 * 60 * 1000);
 });
 
-// Reconnect automatically on disconnect
+// Auto-reconnect on disconnect
 client.on("shardDisconnect", (event, id) => {
-  console.log(`[NET] Disconnected (shard ${id}) — reconnecting in 5s...`);
-  setTimeout(() => {
-    client.login(TOKEN).catch(console.error);
-  }, 5000);
+  console.log(`[NET] Disconnected — reconnecting in 5s...`);
+  setTimeout(() => client.login(TOKEN).catch(console.error), 5000);
 });
 
-// Restore presence if something clears it externally
-client.on("presenceUpdate", (oldPresence, newPresence) => {
+// Restore RPC if something externally clears it
+client.on("presenceUpdate", (_, newPresence) => {
   if (
     newPresence?.userId === client.user?.id &&
     (!newPresence.activities || newPresence.activities.length === 0)
   ) {
-    console.log("[RPC] Presence cleared externally — restoring...");
+    console.log("[RPC] Cleared externally — restoring...");
     setRPC();
   }
 });
 
-// Never crash on unhandled errors
+// ─── Crash Guards ─────────────────────────────────────────────────────────────
 process.on("uncaughtException", (err) => {
   console.error("[ERR] Uncaught exception:", err.message);
 });
-
 process.on("unhandledRejection", (reason) => {
   console.error("[ERR] Unhandled rejection:", reason?.message || reason);
 });
-
 client.on("error", (err) => {
   console.error("[ERR] Client error:", err.message);
 });
 
+// ─── Login ────────────────────────────────────────────────────────────────────
 console.log("[BOT] Starting...");
 client.login(TOKEN).catch((err) => {
   console.error("[BOT] Login failed:", err.message);
