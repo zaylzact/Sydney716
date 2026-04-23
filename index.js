@@ -1,3 +1,17 @@
+// Polyfill for Railway/older Node environments
+if (typeof globalThis.ReadableStream === "undefined") {
+  const { ReadableStream } = require("stream/web");
+  globalThis.ReadableStream = ReadableStream;
+}
+if (typeof globalThis.WritableStream === "undefined") {
+  const { WritableStream } = require("stream/web");
+  globalThis.WritableStream = WritableStream;
+}
+if (typeof globalThis.TransformStream === "undefined") {
+  const { TransformStream } = require("stream/web");
+  globalThis.TransformStream = TransformStream;
+}
+
 const { Client, RichPresence, Options } = require("discord.js-selfbot-v13");
 
 const TOKEN = process.env.DISCORD_TOKEN || process.env.TOKEN;
@@ -24,7 +38,10 @@ const client = new Client({
   }),
   sweepers: {
     messages: { interval: 60, lifetime: 1 },
-    users: { interval: 3600, filter: () => (u) => !u.bot && u.id !== client.user?.id },
+    users: {
+      interval: 3600,
+      filter: () => (u) => !u.bot && u.id !== client.user?.id,
+    },
   },
 });
 
@@ -69,14 +86,13 @@ async function setRPC() {
 
 function checkMemory() {
   const used = process.memoryUsage().heapUsed / 1024 / 1024;
+  console.log(`[MEM] Heap: ${used.toFixed(1)}MB`);
   if (used > MEMORY_LIMIT_MB) {
-    console.log(`[MEM] Heap at ${used.toFixed(1)}MB — clearing caches`);
-    // Clear all Discord internal caches
+    console.log(`[MEM] Over limit — clearing caches`);
     if (client.guilds) client.guilds.cache.clear();
     if (client.channels) client.channels.cache.clear();
     if (client.users) client.users.cache.clear();
     if (client.emojis) client.emojis.cache.clear();
-    // Force garbage collection if available (run node with --expose-gc)
     if (global.gc) {
       global.gc();
       console.log("[MEM] GC triggered");
@@ -101,13 +117,13 @@ client.on("ready", async () => {
 
 // Reconnect automatically on disconnect
 client.on("shardDisconnect", (event, id) => {
-  console.log(`[NET] Disconnected (shard ${id}) — reconnecting...`);
+  console.log(`[NET] Disconnected (shard ${id}) — reconnecting in 5s...`);
   setTimeout(() => {
     client.login(TOKEN).catch(console.error);
   }, 5000);
 });
 
-// Keep presence alive if it gets cleared externally
+// Restore presence if something clears it externally
 client.on("presenceUpdate", (oldPresence, newPresence) => {
   if (
     newPresence?.userId === client.user?.id &&
@@ -134,7 +150,6 @@ client.on("error", (err) => {
 console.log("[BOT] Starting...");
 client.login(TOKEN).catch((err) => {
   console.error("[BOT] Login failed:", err.message);
-  // Retry login every 30 seconds if it fails
   setInterval(() => {
     console.log("[BOT] Retrying login...");
     client.login(TOKEN).catch(console.error);
