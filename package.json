@@ -1,0 +1,16 @@
+{
+  "name": "discord-selfbot",
+  "version": "1.0.0",
+  "description": "Discord selfbot with rich presence using discord.js-selfbot-v13",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "debug": "^4.4.3",
+    "discord.js-selfbot-v13": "^3.4.0"
+  },
+  "engines": {
+    "node": ">=16.9.0"
+  }
+}
